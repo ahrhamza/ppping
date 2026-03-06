@@ -23,7 +23,7 @@ The port number to probe (1–65535).
 The protocol to use. Must be `tcp` or `udp`.
 
 **`count`** (optional, default: `4`)
-The number of probe attempts to make. Must be a positive integer, or the special value `nonstop` to probe continuously until interrupted with Ctrl+C.
+The number of probe attempts to make. Must be a non-negative integer. Use `0` for nonstop mode (probes continuously until Ctrl+C).
 
 ## Common Use Cases
 
@@ -62,7 +62,7 @@ UDP probing is inherently less reliable — a "success" with high latency typica
 ### Continuous monitoring
 
 ```
-> ppping.exe 10.0.0.5 443 tcp nonstop
+> ppping.exe 10.0.0.5 443 tcp 0
 ```
 
 Probes indefinitely until you press Ctrl+C. When interrupted, a final summary is printed with total attempts, success rate, and average latency. Useful for monitoring a service over time or waiting for it to come up.

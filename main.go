@@ -14,13 +14,13 @@ const usage = `Usage: ppping <host> <port> [proto] [count]
   host   IP address or FQDN (required)
   port   Port number (required)
   proto  Protocol: tcp or udp (default: tcp)
-  count  Number of attempts, or "nonstop" for continuous (default: 4)
+  count  Number of attempts, or 0 for nonstop (default: 4)
 
 Examples:
   ppping 172.26.104.10 3389
   ppping 172.26.104.10 3389 tcp
   ppping 172.26.104.10 4433 udp 10
-  ppping 172.26.104.10 3389 tcp nonstop
+  ppping 172.26.104.10 3389 tcp 0
   ppping myapp.internal.com 443`
 
 func main() {
@@ -34,8 +34,9 @@ func main() {
 	proto := "tcp"
 	count := 4
 
-	if _, err := strconv.Atoi(port); err != nil {
-		fmt.Printf("Error: invalid port %q\n", port)
+	portNum, err := strconv.Atoi(port)
+	if err != nil || portNum < 1 || portNum > 65535 {
+		fmt.Printf("Error: invalid port %q (must be 1-65535)\n", port)
 		os.Exit(1)
 	}
 
@@ -49,16 +50,15 @@ func main() {
 
 	nonstop := false
 	if len(os.Args) == 5 {
-		if os.Args[4] == "nonstop" {
+		c, err := strconv.Atoi(os.Args[4])
+		if err != nil || c < 0 {
+			fmt.Printf("Error: invalid count %q (must be 0 or a positive integer)\n", os.Args[4])
+			os.Exit(1)
+		}
+		if c == 0 {
 			nonstop = true
-			count = 0
 		} else {
-			var err error
-			count, err = strconv.Atoi(os.Args[4])
-			if err != nil || count < 1 {
-				fmt.Printf("Error: invalid count %q\n", os.Args[4])
-				os.Exit(1)
-			}
+			count = c
 		}
 	}
 
