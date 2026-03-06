@@ -16,11 +16,17 @@ const usage = `Usage: ppping <host> <port> [proto] [count]
   proto  Protocol: tcp or udp (default: tcp)
   count  Number of attempts, or 0 for nonstop (default: 4)
 
+  The proto and count arguments are optional and can be used in any order:
+    ppping host port [count]        — TCP with given count
+    ppping host port [proto]        — protocol with default count
+    ppping host port [proto] [count]
+
 Examples:
   ppping 172.26.104.10 3389
+  ppping 172.26.104.10 3389 10
+  ppping 172.26.104.10 3389 0
   ppping 172.26.104.10 3389 tcp
   ppping 172.26.104.10 4433 udp 10
-  ppping 172.26.104.10 3389 tcp 0
   ppping myapp.internal.com 443`
 
 func main() {
@@ -40,15 +46,30 @@ func main() {
 		os.Exit(1)
 	}
 
+	nonstop := false
 	if len(os.Args) >= 4 {
-		proto = os.Args[3]
-		if proto != "tcp" && proto != "udp" {
-			fmt.Printf("Error: unsupported protocol %q (use tcp or udp)\n", proto)
-			os.Exit(1)
+		arg3 := os.Args[3]
+		// If arg3 is a number, treat it as count (skip proto, default tcp).
+		if c, err := strconv.Atoi(arg3); err == nil {
+			if c < 0 {
+				fmt.Printf("Error: invalid count %q (must be 0 or a positive integer)\n", arg3)
+				os.Exit(1)
+			}
+			if c == 0 {
+				nonstop = true
+			} else {
+				count = c
+			}
+		} else {
+			// Otherwise treat it as protocol.
+			proto = arg3
+			if proto != "tcp" && proto != "udp" {
+				fmt.Printf("Error: unsupported protocol %q (use tcp or udp)\n", proto)
+				os.Exit(1)
+			}
 		}
 	}
 
-	nonstop := false
 	if len(os.Args) == 5 {
 		c, err := strconv.Atoi(os.Args[4])
 		if err != nil || c < 0 {
