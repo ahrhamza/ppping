@@ -15,7 +15,7 @@ ppping.exe <host> <port> [proto] [count]
 | `host`   | Yes      | —       | IP address or FQDN to probe   |
 | `port`   | Yes      | —       | Port number (1–65535)          |
 | `proto`  | No       | `tcp`   | Protocol: `tcp` or `udp`      |
-| `count`  | No       | `4`     | Number of probe attempts       |
+| `count`  | No       | `4`     | Number of attempts, or `nonstop` |
 
 ## Examples
 
@@ -74,6 +74,19 @@ Probing 172.26.104.10:4433 (udp) x10
   Attempt 2: Success  5000.8ms
   ...
   Summary: 10/10 succeeded, avg 5001.0ms
+```
+
+**Continuous probing (runs until Ctrl+C):**
+
+```
+> ppping.exe 172.26.104.10 3389 tcp nonstop
+
+Probing 172.26.104.10:3389 (tcp) nonstop — Ctrl+C to stop
+  Attempt 1: Success  12.4ms
+  Attempt 2: Success  11.2ms
+  Attempt 3: Success  13.1ms
+  ^C
+  Summary: 3/3 succeeded, avg 12.2ms
 ```
 
 ## How It Works

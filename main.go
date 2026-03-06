@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"os/signal"
 	"strconv"
 	"time"
 )
@@ -13,12 +14,13 @@ const usage = `Usage: ppping <host> <port> [proto] [count]
   host   IP address or FQDN (required)
   port   Port number (required)
   proto  Protocol: tcp or udp (default: tcp)
-  count  Number of attempts (default: 4)
+  count  Number of attempts, or "nonstop" for continuous (default: 4)
 
 Examples:
   ppping 172.26.104.10 3389
   ppping 172.26.104.10 3389 tcp
   ppping 172.26.104.10 4433 udp 10
+  ppping 172.26.104.10 3389 tcp nonstop
   ppping myapp.internal.com 443`
 
 func main() {
@@ -45,14 +47,29 @@ func main() {
 		}
 	}
 
+	nonstop := false
 	if len(os.Args) == 5 {
-		var err error
-		count, err = strconv.Atoi(os.Args[4])
-		if err != nil || count < 1 {
-			fmt.Printf("Error: invalid count %q\n", os.Args[4])
-			os.Exit(1)
+		if os.Args[4] == "nonstop" {
+			nonstop = true
+			count = 0
+		} else {
+			var err error
+			count, err = strconv.Atoi(os.Args[4])
+			if err != nil || count < 1 {
+				fmt.Printf("Error: invalid count %q\n", os.Args[4])
+				os.Exit(1)
+			}
 		}
 	}
+
+	// Catch Ctrl+C to print summary before exiting in nonstop mode.
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, os.Interrupt)
+	stopped := make(chan struct{})
+	go func() {
+		<-sigCh
+		close(stopped)
+	}()
 
 	ips := resolveHost(host)
 
@@ -60,7 +77,7 @@ func main() {
 		if idx > 0 {
 			fmt.Println()
 		}
-		probe(ip, port, proto, count)
+		probe(ip, port, proto, count, nonstop, stopped)
 	}
 }
 
@@ -93,18 +110,36 @@ func resolveHost(host string) []string {
 	return addrs
 }
 
-func probe(ip, port, proto string, count int) {
+func probe(ip, port, proto string, count int, nonstop bool, stopped <-chan struct{}) {
 	target := net.JoinHostPort(ip, port)
-	fmt.Printf("Probing %s (%s) x%d\n", target, proto, count)
+	if nonstop {
+		fmt.Printf("Probing %s (%s) nonstop — Ctrl+C to stop\n", target, proto)
+	} else {
+		fmt.Printf("Probing %s (%s) x%d\n", target, proto, count)
+	}
 
 	var successes int
+	var total int
 	var totalLatency time.Duration
 
-	for i := 1; i <= count; i++ {
+	for i := 1; nonstop || i <= count; i++ {
 		if i > 1 {
-			time.Sleep(1 * time.Second)
+			// Sleep 1s but also listen for Ctrl+C during the wait.
+			select {
+			case <-stopped:
+				goto done
+			case <-time.After(1 * time.Second):
+			}
 		}
 
+		// Check if stopped before each attempt.
+		select {
+		case <-stopped:
+			goto done
+		default:
+		}
+
+		total = i
 		latency, err := doProbe(proto, target)
 		if err != nil {
 			fmt.Printf("  Attempt %d: Failed   %s\n", i, formatError(err))
@@ -115,7 +150,8 @@ func probe(ip, port, proto string, count int) {
 		}
 	}
 
-	fmt.Printf("  Summary: %d/%d succeeded", successes, count)
+done:
+	fmt.Printf("  Summary: %d/%d succeeded", successes, total)
 	if successes > 0 {
 		avg := totalLatency / time.Duration(successes)
 		fmt.Printf(", avg %s", formatLatency(avg))
