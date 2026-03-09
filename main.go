@@ -6,8 +6,11 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"time"
 )
+
+const maxCount = 1_000_000
 
 const usage = `Usage: ppping <host> <port> [proto] [count]
 
@@ -51,8 +54,8 @@ func main() {
 		arg3 := os.Args[3]
 		// If arg3 is a number, treat it as count (skip proto, default tcp).
 		if c, err := strconv.Atoi(arg3); err == nil {
-			if c < 0 {
-				fmt.Printf("Error: invalid count %q (must be 0 or a positive integer)\n", arg3)
+			if c < 0 || c > maxCount {
+				fmt.Printf("Error: invalid count %q (must be 0..1000000)\n", arg3)
 				os.Exit(1)
 			}
 			if c == 0 {
@@ -62,7 +65,7 @@ func main() {
 			}
 		} else {
 			// Otherwise treat it as protocol.
-			proto = arg3
+			proto = strings.ToLower(arg3)
 			if proto != "tcp" && proto != "udp" {
 				fmt.Printf("Error: unsupported protocol %q (use tcp or udp)\n", proto)
 				os.Exit(1)
@@ -72,8 +75,8 @@ func main() {
 
 	if len(os.Args) == 5 {
 		c, err := strconv.Atoi(os.Args[4])
-		if err != nil || c < 0 {
-			fmt.Printf("Error: invalid count %q (must be 0 or a positive integer)\n", os.Args[4])
+		if err != nil || c < 0 || c > maxCount {
+			fmt.Printf("Error: invalid count %q (must be 0..1000000)\n", os.Args[4])
 			os.Exit(1)
 		}
 		if c == 0 {
@@ -110,15 +113,15 @@ func resolveHost(host string) []string {
 
 	addrs, err := net.LookupHost(host)
 	if err != nil {
-		fmt.Printf("Error: could not resolve %s: %v\n", host, err)
+		fmt.Printf("Error: could not resolve %q: %v\n", host, err)
 		os.Exit(1)
 	}
 	if len(addrs) == 0 {
-		fmt.Printf("Error: no addresses found for %s\n", host)
+		fmt.Printf("Error: no addresses found for %q\n", host)
 		os.Exit(1)
 	}
 
-	fmt.Printf("Resolved %s -> %d address", host, len(addrs))
+	fmt.Printf("Resolved %q -> %d address", host, len(addrs))
 	if len(addrs) != 1 {
 		fmt.Print("es")
 	}
