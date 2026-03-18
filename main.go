@@ -24,6 +24,11 @@ const usage = `Usage: ppping <host> <port> [proto] [count]
     ppping host port [proto]        — protocol with default count
     ppping host port [proto] [count]
 
+Output:
+  Success         TCP handshake completed, or UDP reply received
+  open|filtered   UDP only: no reply and no ICMP unreachable (port may be open or silently filtered)
+  Failed          Connection refused, timed out, or unreachable
+
 Examples:
   ppping 172.26.104.10 3389
   ppping 172.26.104.10 3389 10
