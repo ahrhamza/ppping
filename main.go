@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-const maxCount = 1_000_000
+const maxCount = 10_000
 
 const usage = `Usage: ppping <host> <port> [proto] [count]
 
@@ -23,6 +23,11 @@ const usage = `Usage: ppping <host> <port> [proto] [count]
     ppping host port [count]        — TCP with given count
     ppping host port [proto]        — protocol with default count
     ppping host port [proto] [count]
+
+Output:
+  Success         TCP handshake completed, or UDP reply received
+  open|filtered   UDP only: no reply and no ICMP unreachable (port may be open or silently filtered)
+  Failed          Connection refused, timed out, or unreachable
 
 Examples:
   ppping 172.26.104.10 3389
@@ -97,11 +102,27 @@ func main() {
 
 	ips := resolveHost(host)
 
-	for idx, ip := range ips {
-		if idx > 0 {
-			fmt.Println()
+	if !nonstop && len(ips) > 1 {
+		if total := count * len(ips); total > maxCount {
+			adjusted := maxCount / len(ips)
+			if adjusted < 1 {
+				adjusted = 1
+			}
+			fmt.Printf("Warning: %d attempts × %d addresses = %d total pings exceeds limit of %d; capping to %d per address.\n\n", count, len(ips), total, maxCount, adjusted)
+			count = adjusted
 		}
-		probe(ip, port, proto, count, nonstop, stopped)
+	}
+
+	if nonstop && len(ips) > 1 {
+		fmt.Printf("Round-robin nonstop mode: cycling through %d addresses on port %s (%s) — Ctrl+C to stop\n\n", len(ips), port, proto)
+		probeRoundRobin(ips, port, proto, stopped)
+	} else {
+		for idx, ip := range ips {
+			if idx > 0 {
+				fmt.Println()
+			}
+			probe(ip, port, proto, count, nonstop, stopped)
+		}
 	}
 }
 
@@ -128,6 +149,9 @@ func resolveHost(host string) []string {
 	fmt.Println()
 	for i, addr := range addrs {
 		fmt.Printf("  [%d] %s\n", i+1, addr)
+	}
+	if len(addrs) >= 10 {
+		fmt.Printf("Warning: large number of addresses (%d) — probing all of them may generate significant traffic.\n", len(addrs))
 	}
 	fmt.Println()
 
@@ -164,13 +188,17 @@ func probe(ip, port, proto string, count int, nonstop bool, stopped <-chan struc
 		}
 
 		total = i
-		latency, err := doProbe(proto, target)
+		latency, openFiltered, err := doProbe(proto, target)
 		if err != nil {
-			fmt.Printf("  Attempt %d: Failed   %s\n", i, formatError(err))
+			fmt.Printf("  Attempt %d: Failed        %s\n", i, formatError(err))
+		} else if openFiltered {
+			successes++
+			totalLatency += latency
+			fmt.Printf("  Attempt %d: open|filtered %s\n", i, formatLatency(latency))
 		} else {
 			successes++
 			totalLatency += latency
-			fmt.Printf("  Attempt %d: Success  %s\n", i, formatLatency(latency))
+			fmt.Printf("  Attempt %d: Success       %s\n", i, formatLatency(latency))
 		}
 	}
 
@@ -183,7 +211,71 @@ done:
 	fmt.Println()
 }
 
-func doProbe(proto, target string) (time.Duration, error) {
+func probeRoundRobin(ips []string, port, proto string, stopped <-chan struct{}) {
+	type stat struct {
+		successes    int
+		total        int
+		totalLatency time.Duration
+	}
+	stats := make([]stat, len(ips))
+
+	for attempt := 1; ; attempt++ {
+		idx := (attempt - 1) % len(ips)
+		ip := ips[idx]
+		target := net.JoinHostPort(ip, port)
+
+		if attempt > 1 {
+			select {
+			case <-stopped:
+				goto done
+			case <-time.After(1 * time.Second):
+			}
+		}
+
+		select {
+		case <-stopped:
+			goto done
+		default:
+		}
+
+		if attempt > maxCount {
+			fmt.Printf("\nReached global limit of %d total pings — stopping.\n", maxCount)
+			goto done
+		}
+
+		stats[idx].total++
+		latency, openFiltered, err := doProbe(proto, target)
+		if err != nil {
+			fmt.Printf("  Attempt %4d  [%d/%d]  %-21s  Failed        %s\n", attempt, idx+1, len(ips), target, formatError(err))
+		} else if openFiltered {
+			stats[idx].successes++
+			stats[idx].totalLatency += latency
+			fmt.Printf("  Attempt %4d  [%d/%d]  %-21s  open|filtered %s\n", attempt, idx+1, len(ips), target, formatLatency(latency))
+		} else {
+			stats[idx].successes++
+			stats[idx].totalLatency += latency
+			fmt.Printf("  Attempt %4d  [%d/%d]  %-21s  Success       %s\n", attempt, idx+1, len(ips), target, formatLatency(latency))
+		}
+	}
+
+done:
+	fmt.Println()
+	fmt.Println("Summary:")
+	for i, ip := range ips {
+		target := net.JoinHostPort(ip, port)
+		s := stats[i]
+		fmt.Printf("  [%d] %s: %d/%d succeeded", i+1, target, s.successes, s.total)
+		if s.successes > 0 {
+			avg := s.totalLatency / time.Duration(s.successes)
+			fmt.Printf(", avg %s", formatLatency(avg))
+		}
+		fmt.Println()
+	}
+}
+
+// doProbe performs a single probe. The returned bool is true when the UDP
+// result is open|filtered (timeout, not an actual reply).
+func doProbe(proto, target string) (time.Duration, bool, error) {
 	timeout := 5 * time.Second
 
 	switch proto {
@@ -192,15 +284,15 @@ func doProbe(proto, target string) (time.Duration, error) {
 		conn, err := net.DialTimeout("tcp", target, timeout)
 		latency := time.Since(start)
 		if err != nil {
-			return 0, err
+			return 0, false, err
 		}
 		conn.Close()
-		return latency, nil
+		return latency, false, nil
 
 	case "udp":
 		conn, err := net.DialTimeout("udp", target, timeout)
 		if err != nil {
-			return 0, err
+			return 0, false, err
 		}
 		defer conn.Close()
 
@@ -208,7 +300,7 @@ func doProbe(proto, target string) (time.Duration, error) {
 		start := time.Now()
 		_, err = conn.Write([]byte("\x00"))
 		if err != nil {
-			return 0, err
+			return 0, false, err
 		}
 
 		buf := make([]byte, 1)
@@ -218,14 +310,14 @@ func doProbe(proto, target string) (time.Duration, error) {
 		if err != nil {
 			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
 				// No response — open|filtered (typical for UDP).
-				return latency, nil
+				return latency, true, nil
 			}
-			return 0, err
+			return 0, false, err
 		}
-		return latency, nil
+		return latency, false, nil
 
 	default:
-		return 0, fmt.Errorf("unsupported protocol: %s", proto)
+		return 0, false, fmt.Errorf("unsupported protocol: %s", proto)
 	}
 }
 
