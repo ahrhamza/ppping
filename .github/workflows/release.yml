@@ -1,0 +1,75 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.goos }}-${{ matrix.goarch }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - goos: windows
+            goarch: amd64
+            asset_name: ppping-windows-amd64.exe
+            binary: ppping.exe
+          - goos: linux
+            goarch: amd64
+            asset_name: ppping-linux-amd64
+            binary: ppping
+          - goos: linux
+            goarch: arm64
+            asset_name: ppping-linux-arm64
+            binary: ppping
+          - goos: darwin
+            goarch: amd64
+            asset_name: ppping-darwin-amd64
+            binary: ppping
+          - goos: darwin
+            goarch: arm64
+            asset_name: ppping-darwin-arm64
+            binary: ppping
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: go build -o ${{ matrix.binary }} .
+
+      - name: Rename binary
+        run: mv ${{ matrix.binary }} ${{ matrix.asset_name }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset_name }}
+          path: ${{ matrix.asset_name }}
+
+  release:
+    name: Create Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*
+          generate_release_notes: true
