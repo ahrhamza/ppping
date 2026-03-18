@@ -171,6 +171,11 @@ func probe(ip, port, proto string, count int, nonstop bool, stopped <-chan struc
 	var totalLatency time.Duration
 
 	for i := 1; nonstop || i <= count; i++ {
+		if nonstop && i > maxCount {
+			fmt.Printf("\nReached global limit of %d total pings — stopping.\n", maxCount)
+			goto done
+		}
+
 		if i > 1 {
 			// Sleep 1s but also listen for Ctrl+C during the wait.
 			select {
