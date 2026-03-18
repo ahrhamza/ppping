@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-const maxCount = 1_000_000
+const maxCount = 10_000
 
 const usage = `Usage: ppping <host> <port> [proto] [count]
 
@@ -97,6 +97,17 @@ func main() {
 
 	ips := resolveHost(host)
 
+	if !nonstop && len(ips) > 1 {
+		if total := count * len(ips); total > maxCount {
+			adjusted := maxCount / len(ips)
+			if adjusted < 1 {
+				adjusted = 1
+			}
+			fmt.Printf("Warning: %d attempts × %d addresses = %d total pings exceeds limit of %d; capping to %d per address.\n\n", count, len(ips), total, maxCount, adjusted)
+			count = adjusted
+		}
+	}
+
 	if nonstop && len(ips) > 1 {
 		fmt.Printf("Round-robin nonstop mode: cycling through %d addresses on port %s (%s) — Ctrl+C to stop\n\n", len(ips), port, proto)
 		probeRoundRobin(ips, port, proto, stopped)
@@ -133,6 +144,9 @@ func resolveHost(host string) []string {
 	fmt.Println()
 	for i, addr := range addrs {
 		fmt.Printf("  [%d] %s\n", i+1, addr)
+	}
+	if len(addrs) >= 10 {
+		fmt.Printf("Warning: large number of addresses (%d) — probing all of them may generate significant traffic.\n", len(addrs))
 	}
 	fmt.Println()
 
@@ -213,6 +227,11 @@ func probeRoundRobin(ips []string, port, proto string, stopped <-chan struct{}) 
 		case <-stopped:
 			goto done
 		default:
+		}
+
+		if attempt > maxCount {
+			fmt.Printf("\nReached global limit of %d total pings — stopping.\n", maxCount)
+			goto done
 		}
 
 		stats[idx].total++
