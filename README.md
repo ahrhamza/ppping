@@ -180,7 +180,7 @@ The output is always a single standalone binary with no runtime dependencies.
 | Output                             | Meaning                                                        |
 |------------------------------------|----------------------------------------------------------------|
 | `Success`                          | Connection completed (TCP handshake, or UDP reply received)    |
-| `open|filtered`                    | UDP timeout — no reply, but no ICMP unreachable either         |
+| `open\|filtered`                   | UDP timeout — no reply, but no ICMP unreachable either         |
 | `Failed: connection refused`       | Host is reachable but nothing is listening on that port        |
 | `Failed: timeout`                  | No response within 5 seconds — host or port is filtered        |
 | `Failed: host unreachable / no route` | Network-level connectivity issue                            |
