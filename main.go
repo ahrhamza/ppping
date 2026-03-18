@@ -97,11 +97,16 @@ func main() {
 
 	ips := resolveHost(host)
 
-	for idx, ip := range ips {
-		if idx > 0 {
-			fmt.Println()
+	if nonstop && len(ips) > 1 {
+		fmt.Printf("Round-robin nonstop mode: cycling through %d addresses on port %s (%s) — Ctrl+C to stop\n\n", len(ips), port, proto)
+		probeRoundRobin(ips, port, proto, stopped)
+	} else {
+		for idx, ip := range ips {
+			if idx > 0 {
+				fmt.Println()
+			}
+			probe(ip, port, proto, count, nonstop, stopped)
 		}
-		probe(ip, port, proto, count, nonstop, stopped)
 	}
 }
 
@@ -181,6 +186,59 @@ done:
 		fmt.Printf(", avg %s", formatLatency(avg))
 	}
 	fmt.Println()
+}
+
+func probeRoundRobin(ips []string, port, proto string, stopped <-chan struct{}) {
+	type stat struct {
+		successes    int
+		total        int
+		totalLatency time.Duration
+	}
+	stats := make([]stat, len(ips))
+
+	for attempt := 1; ; attempt++ {
+		idx := (attempt - 1) % len(ips)
+		ip := ips[idx]
+		target := net.JoinHostPort(ip, port)
+
+		if attempt > 1 {
+			select {
+			case <-stopped:
+				goto done
+			case <-time.After(1 * time.Second):
+			}
+		}
+
+		select {
+		case <-stopped:
+			goto done
+		default:
+		}
+
+		stats[idx].total++
+		latency, err := doProbe(proto, target)
+		if err != nil {
+			fmt.Printf("  Attempt %4d  [%d/%d]  %-21s  Failed   %s\n", attempt, idx+1, len(ips), target, formatError(err))
+		} else {
+			stats[idx].successes++
+			stats[idx].totalLatency += latency
+			fmt.Printf("  Attempt %4d  [%d/%d]  %-21s  Success  %s\n", attempt, idx+1, len(ips), target, formatLatency(latency))
+		}
+	}
+
+done:
+	fmt.Println()
+	fmt.Println("Summary:")
+	for i, ip := range ips {
+		target := net.JoinHostPort(ip, port)
+		s := stats[i]
+		fmt.Printf("  [%d] %s: %d/%d succeeded", i+1, target, s.successes, s.total)
+		if s.successes > 0 {
+			avg := s.totalLatency / time.Duration(s.successes)
+			fmt.Printf(", avg %s", formatLatency(avg))
+		}
+		fmt.Println()
+	}
 }
 
 func doProbe(proto, target string) (time.Duration, error) {
