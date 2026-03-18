@@ -183,13 +183,17 @@ func probe(ip, port, proto string, count int, nonstop bool, stopped <-chan struc
 		}
 
 		total = i
-		latency, err := doProbe(proto, target)
+		latency, openFiltered, err := doProbe(proto, target)
 		if err != nil {
-			fmt.Printf("  Attempt %d: Failed   %s\n", i, formatError(err))
+			fmt.Printf("  Attempt %d: Failed        %s\n", i, formatError(err))
+		} else if openFiltered {
+			successes++
+			totalLatency += latency
+			fmt.Printf("  Attempt %d: open|filtered %s\n", i, formatLatency(latency))
 		} else {
 			successes++
 			totalLatency += latency
-			fmt.Printf("  Attempt %d: Success  %s\n", i, formatLatency(latency))
+			fmt.Printf("  Attempt %d: Success       %s\n", i, formatLatency(latency))
 		}
 	}
 
@@ -235,13 +239,17 @@ func probeRoundRobin(ips []string, port, proto string, stopped <-chan struct{}) 
 		}
 
 		stats[idx].total++
-		latency, err := doProbe(proto, target)
+		latency, openFiltered, err := doProbe(proto, target)
 		if err != nil {
-			fmt.Printf("  Attempt %4d  [%d/%d]  %-21s  Failed   %s\n", attempt, idx+1, len(ips), target, formatError(err))
+			fmt.Printf("  Attempt %4d  [%d/%d]  %-21s  Failed        %s\n", attempt, idx+1, len(ips), target, formatError(err))
+		} else if openFiltered {
+			stats[idx].successes++
+			stats[idx].totalLatency += latency
+			fmt.Printf("  Attempt %4d  [%d/%d]  %-21s  open|filtered %s\n", attempt, idx+1, len(ips), target, formatLatency(latency))
 		} else {
 			stats[idx].successes++
 			stats[idx].totalLatency += latency
-			fmt.Printf("  Attempt %4d  [%d/%d]  %-21s  Success  %s\n", attempt, idx+1, len(ips), target, formatLatency(latency))
+			fmt.Printf("  Attempt %4d  [%d/%d]  %-21s  Success       %s\n", attempt, idx+1, len(ips), target, formatLatency(latency))
 		}
 	}
 
@@ -260,7 +268,9 @@ done:
 	}
 }
 
-func doProbe(proto, target string) (time.Duration, error) {
+// doProbe performs a single probe. The returned bool is true when the UDP
+// result is open|filtered (timeout, not an actual reply).
+func doProbe(proto, target string) (time.Duration, bool, error) {
 	timeout := 5 * time.Second
 
 	switch proto {
@@ -269,15 +279,15 @@ func doProbe(proto, target string) (time.Duration, error) {
 		conn, err := net.DialTimeout("tcp", target, timeout)
 		latency := time.Since(start)
 		if err != nil {
-			return 0, err
+			return 0, false, err
 		}
 		conn.Close()
-		return latency, nil
+		return latency, false, nil
 
 	case "udp":
 		conn, err := net.DialTimeout("udp", target, timeout)
 		if err != nil {
-			return 0, err
+			return 0, false, err
 		}
 		defer conn.Close()
 
@@ -285,7 +295,7 @@ func doProbe(proto, target string) (time.Duration, error) {
 		start := time.Now()
 		_, err = conn.Write([]byte("\x00"))
 		if err != nil {
-			return 0, err
+			return 0, false, err
 		}
 
 		buf := make([]byte, 1)
@@ -295,14 +305,14 @@ func doProbe(proto, target string) (time.Duration, error) {
 		if err != nil {
 			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
 				// No response — open|filtered (typical for UDP).
-				return latency, nil
+				return latency, true, nil
 			}
-			return 0, err
+			return 0, false, err
 		}
-		return latency, nil
+		return latency, false, nil
 
 	default:
-		return 0, fmt.Errorf("unsupported protocol: %s", proto)
+		return 0, false, fmt.Errorf("unsupported protocol: %s", proto)
 	}
 }
 
